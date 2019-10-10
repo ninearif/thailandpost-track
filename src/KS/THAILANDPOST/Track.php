@@ -2,127 +2,120 @@
 
 namespace KS\THAILANDPOST;
 
-use HeadlessChromium\BrowserFactory;
-use PHPHtmlParser\Dom;
-use Exception;
+use GuzzleHttp\Client;
+use JsonException;
 
-class RequestRejectException extends Exception { }
+class Track
+{
+    /**
+     * Constant for API Base URI.
+     */
+    const BASE_URI = 'https://trackapi.thailandpost.co.th/post/api/v1/';
 
-class Track {
+    /**
+     * @var string
+     */
+    private $userToken = null;
+    
+    /**
+     * @var string
+     */
+    private $apiToken = null;
 
-    public static $URL_POST = 'http://track.thailandpost.co.th/tracking/default.aspx?';
+    /**
+     * @var int
+     */
+    private $apiTokenExpire = null;
 
-    private $url = '';
-    private $browser;
-    private $timeout = 10000;
+    /**
+     * @var GuzzleHttp\Client
+     */
+    private $client =  null;
 
-    public function __construct($chrome_bin_path ='chromium-browser', $lang = 'th', $proxy = null) {
-        if ($lang == 'th') {
-            $this->enableThaiLanguage(); 
-        } else {
-            $this->enableEngLanguage(); 
-        }
-        
-        $browserFactory = new BrowserFactory($chrome_bin_path);
-        $options = [
-            'windowSize' => [1280, 800],
-            'headless' => true,
+    /**
+     * Instantiate a new Thailand Post client.
+     *
+     * @param string        $userToken
+     * @param double|null   $timeout
+     */
+    public function __construct($userToken, $timeout = 10.0)
+    {
+        $this->userToken = $userToken;
+        $this->client = new Client([
+            'base_uri' => BASE_URI,
+            'timeout'  => $timeout,
+            'headers' => [
+                'Content-Type' => 'application/json'
+            ]
+        ]);
+    }
+
+    public function __destruct()
+    {
+    }
+
+    /**
+     * Get API Token
+     *
+     * @throws JsonException If get invalid JSON format from response.
+     *
+     * @return null|string Token
+     */
+    public function getToken()
+    {
+        $response = $this->client->request('POST', 'authenticate/token', [
+            'headers' =>  [
+                'Authorization' => 'Token ' . $this->apiToken
+                ]
+            ]);
+        $result = [
+            'code' => $response->getStatusCode(),
+            'message' =>  $response->getStatusCode(),
+            'data'  => null
         ];
         
-        if (!empty($proxy)) {
-            $options['customFlags'] = [
-                '--proxy-server="' . $proxy . '"', 
-                //'--incognito',
-            ];
+        if ($result['code'] == 200) {
+            $body = json_decode($response->getBody());
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                throw new JsonException('Failed while encrypt the data to JSON.');
+            }
+            $this->apiToken = $body->token;
+            $this->apiTokenExpire = strtotime($body->expire);
+            $result['data'] = $body;
+            return $result;
         }
-        
-        $this->browser = $browserFactory->createBrowser($options);
-    }
-
-    public function __destruct() {
-        $this->browser->close();
-    }
-
-    public function setTimeout($timeout) {
-        $this->timeout = $timeout;
+        return $result;
     }
     
-    public function enableThaiLanguage() {
-        $this->url = Track::$URL_POST . 'lang=th';
-    }
-    public function enableEngLanguage() {
-        $this->url = Track::$URL_POST . 'lang=en';
-    }
-
-    public function getTracks($trackerNumber) {
-        if (empty($trackerNumber) || strlen($trackerNumber) != 13) {
-            return false;
+    /**
+     * Get items tracking data
+     *
+     * @throws JsonException If get invalid JSON format from response.
+     *
+     * @return mixed
+     */
+    public function track($itemsCode = [])
+    {
+        $response = $this->client->request('POST', 'track', [
+            'headers' =>  [
+                'Authorization' => 'Token ' . $this->apiToken
+                ]
+            ]);
+       
+        $result = [
+            'code' => $response->getStatusCode(),
+            'message' =>  $response->getStatusCode(),
+            'data'  => null
+        ];
+        
+        if ($result['code'] == 200) {
+            $body = json_decode($response->getBody());
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                throw new JsonException('Failed while encrypt the data to JSON.');
+            }
+            $result['data'] = $body;
+            return $result;
         }
-
-        $trackerNumber = strtoupper($trackerNumber);
-
-        $page = $this->browser->createPage();
-        $page->navigate($this->url)->waitForNavigation('networkIdle', $this->timeout);
-
-        $evaluation = $page->evaluate(
-            '(() => {
-                    document.querySelector("#TextBarcode").value = "' . $trackerNumber . '";
-                })()'
-            );
-          
-        try {
-            $slider = $page->evaluate("$('.bgSlider').position()")->getReturnValue();
-        } catch (Exception $e) {
-            throw new RequestRejectException('Thailand post ban your ip address');
-        }
-        
-
-        // Mouse slide
-        $page->mouse()
-        ->move($slider['left'] + 5, $slider['top'] + 5)       
-        ->press()                       
-        ->move($slider['left'] + 5 + 179,  $slider['top'] + 5, ['steps' => 1])      
-        ->release();
-        
-        // wait the page load
-        $page->waitForReload();
-
-        $html = $page->evaluate("document.querySelector('body').innerHTML")->getReturnValue();
-
-        //$page->close();
-
-        $tracks = $this->parseHTML($html);
-        
-        return !empty($tracks) ? $tracks : false;
+        return $result;
     }
-
-    public function parseHTML($html) {
-        //Convert TIS-620 to UTF-8
-        //$html = iconv('TIS-620', 'UTF-8//IGNORE', $html);
-        
-        $dom = new Dom();
-        $dom->load($html, ['enforceEncoding' => 'UTF-8']);
-        $trs = $dom->find('table#DataGrid1 tr');
-
-        $results = [];
-        for ($i = 1; $i < count($trs); $i++) {
-            $row = $trs[$i];
-            $tds = $row->find('td');
-
-            $result = [];
-            $result['date'] = $this->cleanText($tds[0]);
-            $result['location'] = $this->cleanText($tds[1]);
-            $result['description'] = $this->cleanText($tds[2]);
-            $result['status'] = $this->cleanText($tds[3]);
-
-            $results[] = $result;
-        }
-
-        return $results;
-    }
-    
-    public function cleanText($str) {
-        return trim(str_replace('&nbsp;', '', strip_tags($str)));
-    }
-    
 }
