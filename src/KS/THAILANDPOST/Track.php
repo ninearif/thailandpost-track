@@ -18,9 +18,9 @@ class Track {
 
     public function __construct($chrome_bin_path ='chromium-browser', $lang = 'th', $proxy = null) {
         if ($lang == 'th') {
-            $this->enableThaiLanguage(); 
+            $this->setLanguage('th'); 
         } else {
-            $this->enableEngLanguage(); 
+            $this->setLanguage('en'); 
         }
         
         $browserFactory = new BrowserFactory($chrome_bin_path);
@@ -47,13 +47,10 @@ class Track {
         $this->timeout = $timeout;
     }
     
-    public function enableThaiLanguage() {
-        $this->url = Track::$URL_POST . 'lang=th';
+    public function setLanguage($lang) {
+        $this->url = Track::$URL_POST . 'lang=' . $lang;
     }
-    public function enableEngLanguage() {
-        $this->url = Track::$URL_POST . 'lang=en';
-    }
-
+  
     public function getTracks($trackerNumber) {
         if (empty($trackerNumber) || strlen($trackerNumber) != 13) {
             return false;
